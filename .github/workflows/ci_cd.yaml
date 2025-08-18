@@ -13,7 +13,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip' 
+          cache: 'pip'
 
       - name: Install Packages
         run: |
@@ -49,57 +49,60 @@ jobs:
           DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
         run: |
           python scripts/promote_model_to_prod.py
-          
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      # Docker buildx + cache setup
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-     
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-  
-      - name: Build, tag, and push docker image to Amazon ECR
+      - name: Build and push Docker image to ECR
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: ${{ secrets.ECR_REPOSITORY_URI }}
           IMAGE_TAG: latest
         run: |
-          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
-          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+          docker build --cache-from=type=local,src=/tmp/.buildx-cache \
+                       --cache-to=type=local,dest=/tmp/.buildx-cache-new \
+                       -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          # retry push with reduced concurrency
+          for i in 1 2 3; do
+            docker push --max-concurrent-uploads=1 $REGISTRY/$REPOSITORY:$IMAGE_TAG && break || sleep 20
+          done
+          # move new cache
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
-      
       # Zip the required files
       - name: Zip files for deployment
         if: success()
         run: |
-            zip -r deployment.zip appspec.yml deploy/scripts/install_dependencies.sh deploy/scripts/start_docker.sh
-
+          zip -r deployment.zip appspec.yml deploy/scripts/install_dependencies.sh deploy/scripts/start_docker.sh
 
       # Upload the ZIP file to S3
       - name: Upload ZIP to S3
         if: success()
         run: |
-            aws s3 cp deployment.zip s3://deliverytimepredictiondeployment21/deployment.zip
+          aws s3 cp deployment.zip s3://deliverytimepredictiondeployment21/deployment.zip
 
-            
       # Deploy to AWS CodeDeploy using the uploaded ZIP file
       - name: Deploy to AWS CodeDeploy
         if: success()
         run: |
-            aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
-            aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-            aws deploy create-deployment \
+          aws deploy create-deployment \
             --application-name deliverytimeprediction \
             --deployment-config-name CodeDeployDefault.OneAtATime \
             --deployment-group-name deliverytimepredictiongroup \
             --s3-location bucket=deliverytimepredictiondeployment21,key=deployment.zip,bundleType=zip \
             --file-exists-behavior OVERWRITE \
             --region us-east-1
-
-
-  
