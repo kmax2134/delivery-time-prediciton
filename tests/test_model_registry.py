@@ -5,7 +5,7 @@ import dagshub
 import json
 
 dagshub.init(repo_owner='kmax2134', repo_name='delivery-time-prediciton', mlflow=True)
-# set the mlflow tracking server
+# set the mlflow tracking 
 mlflow.set_tracking_uri("https://dagshub.com/kmax2134/delivery-time-prediciton.mlflow")
 
 
