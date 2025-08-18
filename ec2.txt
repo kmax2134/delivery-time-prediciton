@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# update packages
+sudo apt update -y
+
+# install ruby required for code deploy
+sudo apt install ruby-full -y
+
+# get additional packages
+sudo apt install wget -y
+cd /home/ubuntu
+
+# import the agent (for us-east-1 region)
+wget https://aws-codedeploy-us-east-1.s3.us-east-1.amazonaws.com/latest/install
+
+# install the agent
+chmod +x ./install
+sudo ./install auto
+
+# run the agent
+sudo systemctl start codedeploy-agent
+
+# enable agent on boot
+sudo systemctl enable codedeploy-agent
